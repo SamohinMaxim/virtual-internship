@@ -55,6 +55,37 @@ def get_pereval(pereval_id):
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+
+@app.route('/submitData/<int:pereval_id>', methods=['PATCH'])
+def update_pereval(pereval_id):
+    """Редактировать существующую запись, если она в статусе new."""
+    if not request.is_json:
+        return jsonify({
+            'state': 0,
+            'message': 'Content-Type must be application/json'
+        }), 400
+
+    data = request.json
+    try:
+        result = data_manager.update_pereval_if_new(pereval_id, data)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'state': 0, 'message': str(e)})
+
+
+@app.route('/submitData/', methods=['GET'])
+def get_perevals_by_email():
+    """Список данных обо всех объектах, которые пользователь с почтой <email> отправил на сервер."""
+    email = request.args.get('user__email')
+    if not email:
+        return jsonify({'status': 'error', 'message': 'Missing user__email parameter'}), 400
+
+    try:
+        perevals = data_manager.get_perevals_by_user_email(email)
+        return jsonify({'status': 'success', 'data': perevals}), 200
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
 
