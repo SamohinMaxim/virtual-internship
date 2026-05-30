@@ -180,3 +180,154 @@ class PerevalDataManager:
                 'status': 'error',
                 'message': str(e)
             }
+
+    def get_pereval_by_id(self, pereval_id: int) -> Optional[Dict]:
+        """Получить перевал по ID вместе со всей связанной информацией."""
+        with self._get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT
+                        pa.id,
+                        pa.beauty_title,
+                        pa.title,
+                        pa.other_titles,
+                        pa.connect,
+                        pa.add_time,
+                        pa.status,
+                        u.email,
+                        u.phone,
+                        u.fam,
+                        u.name,
+                        u.otc,
+                        c.latitude,
+                        c.longitude,
+                        c.height,
+                        l.winter,
+                        l.summer,
+                        l.autumn,
+                        l.spring,
+                        ARRAY_AGG(json_build_object('img_path', i.img_path, 'title', i.title)) FILTER (WHERE i.id IS NOT NULL) AS images
+                    FROM pereval_added pa
+                    LEFT JOIN users u ON pa.user_id = u.id
+                    LEFT JOIN coords c ON pa.coord_id = c.id
+                    LEFT JOIN levels l ON pa.level_id = l.id
+                    LEFT JOIN pereval_images pi ON pa.id = pi.pereval_id
+                    LEFT JOIN images i ON pi.image_id = i.id
+                    WHERE pa.id = %s
+                    GROUP BY pa.id, u.id, c.id, l.id
+                """, (pereval_id,))
+                row = cursor.fetchone()
+                if row is None:
+                    return None
+                return dict(row)
+
+    def update_pereval_if_new(self, pereval_id: int, data: Dict) -> Dict[str, any]:
+        """
+        Редактировать перевал, если его статус 'new'.
+        Возвращает словарь с полями state и message.
+        """
+        with self._get_connection() as conn:
+            try:
+                with conn.cursor() as cursor:
+                    # Проверяем статус
+                    cursor.execute(
+                        "SELECT status FROM pereval_added WHERE id = %s",
+                        (pereval_id,)
+                    )
+                    row = cursor.fetchone()
+                    if not row:
+                        return {'state': 0, 'message': 'Pereval not found'}
+                    if row[0] != 'new':
+                        return {'state': 0, 'message': 'Cannot edit pereval: status is not "new"'}
+
+                    # Обновляем координаты
+                    if 'coords' in data:
+                        cursor.execute(
+                            "UPDATE coords SET latitude = %s, longitude = %s, height = %s WHERE id = (SELECT coord_id FROM pereval_added WHERE id = %s)",
+                            (data['coords'].get('latitude'),
+                             data['coords'].get('longitude'),
+                             data['coords'].get('height'),
+                             pereval_id)
+                        )
+
+                    # Обновляем уровень сложности
+                    if 'level' in data:
+                        cursor.execute(
+                            "UPDATE levels SET winter = %s, summer = %s, autumn = %s, spring = %s WHERE id = (SELECT level_id FROM pereval_added WHERE id = %s)",
+                            (data['level'].get('winter'),
+                             data['level'].get('summer'),
+                             data['level'].get('autumn'),
+                             data['level'].get('spring'),
+                             pereval_id)
+                        )
+
+                    # Обновляем основную запись перевала
+                    cursor.execute(
+                        """UPDATE pereval_added
+                           SET beauty_title = %s, title = %s, other_titles = %s, connect = %s, add_time = %s
+                           WHERE id = %s""",
+                        (data.get('beautyTitle'),
+                         data.get('title'),
+                         data.get('other_titles'),
+                         data.get('connect'),
+                         data.get('add_time'),
+                         pereval_id)
+                    )
+
+                    # Обрабатываем изображения: удаляем старые, добавляем новые
+                    if 'images' in data:
+                        # Удаляем старые связи
+                        cursor.execute(
+                            "DELETE FROM pereval_images WHERE pereval_id = %s",
+                            (pereval_id,)
+                        )
+                        for image_data in data['images']:
+                            cursor.execute(
+                                "INSERT INTO images (img_path, title) VALUES (%s, %s) RETURNING id",
+                                (image_data['img_path'], image_data.get('title'))
+                            )
+                            image_id = cursor.fetchone()[0]
+                            cursor.execute(
+                                "INSERT INTO pereval_images (pereval_id, image_id) VALUES (%s, %s)",
+                                (pereval_id, image_id)
+                            )
+
+                conn.commit()
+                return {'state': 1, 'message': 'Successfully updated'}
+            except Exception as e:
+                conn.rollback()
+                return {'state': 0, 'message': str(e)}
+
+    def get_perevals_by_user_email(self, email: str) -> List[Dict]:
+        """Получить все перевалы пользователя по email."""
+        with self._get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT
+                        pa.id,
+                        pa.beauty_title,
+                        pa.title,
+                        pa.other_titles,
+                        pa.connect,
+                        pa.add_time,
+                        pa.status,
+                        u.email,
+                        c.latitude,
+                        c.longitude,
+                        c.height,
+                        l.winter,
+                        l.summer,
+                        l.autumn,
+                        l.spring,
+                        ARRAY_AGG(json_build_object('img_path', i.img_path, 'title', i.title)) FILTER (WHERE i.id IS NOT NULL) AS images
+                    FROM pereval_added pa
+                    JOIN users u ON pa.user_id = u.id
+                    JOIN coords c ON pa.coord_id = c.id
+                    JOIN levels l ON pa.level_id = l.id
+                    LEFT JOIN pereval_images pi ON pa.id = pi.pereval_id
+                    LEFT JOIN images i ON pi.image_id = i.id
+                    WHERE u.email = %s
+                    GROUP BY pa.id, u.id, c.id, l.id
+                """, (email,))
+                rows = cursor.fetchall()
+                return [dict(row) for row in rows]
