@@ -43,5 +43,20 @@ def submit_data():
     else:
         return jsonify(result), 400  # 400 Bad Request
 
+
+@app.route('/submitData/<int:pereval_id>', methods=['GET'])
+def get_pereval(pereval_id):
+    """Получить одну запись (перевал) по её ID."""
+    try:
+        pereval_data = data_manager.get_pereval_by_id(pereval_id)
+        if pereval_data is None:
+            return jsonify({'status': 'error', 'message': 'Pereval not found'}), 404
+        return jsonify(pereval_data), 200
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
+
+
+
